@@ -1,6 +1,4 @@
 
-use std::ops::{Add,Shr};
-
 /**
  * Streams
  */
@@ -50,8 +48,8 @@ impl StreamT {
 
     fn get_first_char(&self) -> char {
         match self.iterable.chars().next() {
-            None => panic!("wow"),
-            Some(ch) => ch
+            None => '\0',
+            Some(ch) => ch,
         }
     }
 }
@@ -64,37 +62,117 @@ fn create_stream(iterable: &'static str) -> StreamT {
  * Parser
  */
 
-struct ParserT<T>(T);
-
 trait Parser {
     fn get_name(&self) -> String;
     fn run(&self, mut stream: StreamT) -> (Option<String>, StreamT);
 }
 
-impl<T, U> Shr<T> for ParserT<T> where T: Parser {
-    type Output = ParserT<Sequence<T, U>>;
-    fn shr(self, other: ParserT<T>) -> Self::Output {
-        println!("Ok");
-        self
+/**
+ * Many
+ */
+#[derive(Clone, Copy)]
+struct Many<T> {
+    parser: T,
+}
+
+fn many<T: Parser>(parser: T) -> Many<T> {
+    Many { parser: parser }
+}
+
+impl<T: Parser> Parser for Many<T> {
+    fn get_name(&self) -> String {
+        format!("many({})", self.parser.get_name())
+    }
+
+    fn run(&self, stream: StreamT) -> (Option<String>, StreamT) {
+        let mut st = stream;
+        while true {
+            let (err, s) = self.parser.run(st);
+            if err != None {
+                return (None, st)
+            }
+            st = s;
+        }
+        (None, st)
+    }
+}
+
+fn many1<T: Parser + Copy>(parser: T) -> Seq<T, Many<T>> {
+    seq(parser, many(parser))
+}
+
+/**
+ * Maybe
+ */
+#[derive(Clone, Copy)]
+struct Maybe<T> {
+    parser: T,
+}
+
+fn maybe<T: Parser>(parser: T) -> Maybe<T> {
+    Maybe { parser: parser }
+}
+
+impl<T: Parser> Parser for Maybe<T> {
+    fn get_name(&self) -> String {
+        format!("maybe({})", self.parser.get_name())
+    }
+
+    fn run(&self, stream: StreamT) -> (Option<String>, StreamT) {
+        let (_, s) = self.parser.run(stream);
+        (None, s)
     }
 }
 
 /**
- * Sequence
+ * Choice
  */
-struct Sequence<T: Parser, U: Parser> {
+#[derive(Clone, Copy)]
+struct Choice<T: Parser, U: Parser> {
     first: T,
     second: U,
 }
 
-fn sequence<T: Parser, U: Parser>(first: T, second: U) -> Sequence<T, U> {
-    Sequence { first: first, second: second }
+fn choice<T: Parser, U: Parser>(first: T, second: U) -> Choice<T, U> {
+    Choice { first: first, second: second }
 }
 
-impl<T, U> Parser for Sequence<T, U> where T: Parser, U: Parser {
+impl<T, U> Parser for Choice<T, U> where T: Parser, U: Parser {
     fn get_name(&self) -> String {
         format!(
-            "Sequence({}, {})",
+            "choice({}, {})",
+            self.first.get_name(),
+            self.second.get_name(),
+        )
+    }
+
+    fn run(&self, mut s1: StreamT) -> (Option<String>, StreamT) {
+        let (e1, s2) = self.first.run(s1);
+        if e1 == None { return (None, s2) }
+        let (e2, s3) = self.second.run(s1);
+        if e2 == None { return (None, s3) }
+        let error = Some(format!("Cannot match {} with {:?}", self.get_name(), s1.iterable.chars().next()));
+        (error, s1)
+    }
+}
+
+/**
+ * Seq
+ */
+#[derive(Clone, Copy)]
+struct Seq<T: Parser, U: Parser> {
+    first: T,
+    second: U,
+}
+
+fn seq<T: Parser, U: Parser>(first: T, second: U) -> Seq<T, U> {
+    Seq { first: first, second: second }
+}
+
+impl<T, U> Parser for Seq<T, U> where T: Parser, U: Parser {
+    fn get_name(&self) -> String {
+        format!(
+            "seq({}, {})",
             self.first.get_name(),
             self.second.get_name(),
         )
@@ -112,6 +190,7 @@ impl<T, U> Parser for Sequence<T, U> where T: Parser, U: Parser {
 /**
  * Chars
  */
+#[derive(Clone, Copy)]
 struct Char {
     character: char,
 }
@@ -139,6 +218,7 @@ impl Parser for Char {
 /**
  * Symbols
  */
+#[derive(Clone, Copy)]
 struct Symbol {
     string: &'static str,
 }
@@ -163,7 +243,9 @@ fn symbol(string: &'static str) -> Symbol {
 }
 
 fn main() {
-    let mut stream = create_stream("He\nllo World");
-    let parser = symbol("He\nllo");
-    println!("{}", parser.get_name());
+    let mut stream = create_stream("arrrb");
+    let parser = many1(ch('a'));
+    let (error, s) = parser.run(stream);
+    println!("{:?}", error);
+    s.print();
 }

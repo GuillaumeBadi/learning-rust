@@ -39,7 +39,7 @@ mod parser {
     }
 
     impl StreamT {
-        fn print(&self) {
+        pub fn print(&self) {
             println!("Iterable: {}", self.iterable);
             println!("Column: {}", self.column);
             println!("Line: {}", self.line);
@@ -125,7 +125,7 @@ mod parser {
         fn run(&self, mut stream: StreamT) -> (Result<char>, StreamT) {
             let ch = stream.get_first_char();
             if self.character == ch {
-                self.ok(ch, stream)
+                self.ok(ch, stream.consume(ch))
             } else {
                 let error = Error::UnexpectedToken(ch.to_string(), self.character.to_string());
                 self.ko(error, stream)
@@ -162,15 +162,13 @@ mod parser {
             if let (Result::Success(r), s2) = self.first.run(s1) {
                 return self.ok(Either::Right(r), s2)
             }
-            if let (Result::Success(r), s2) = self.first.run(s1) {
-                return self.ok(Either::Right(r), s2)
+            if let (Result::Success(r), s2) = self.second.run(s1) {
+                return self.ok(Either::Left(r), s2)
             }
             let error = Error::UnexpectedToken(String::from(s1.iterable), self.get_name());
             self.ko(error, s1)
         }
     }
-
-    /*
 
     /**
      * Many
@@ -185,24 +183,32 @@ mod parser {
     }
 
     impl<T: Parser> Parser for Many<T> {
-        type Output = i32;
+
+        type Output = Vec<T::Output>;
+
         fn get_name(&self) -> String {
             format!("many({})", self.parser.get_name())
         }
 
-        fn run(&self, stream: StreamT) -> (Option<String>, StreamT) {
+        fn run(&self, stream: StreamT) -> (Result<Self::Output>, StreamT) {
             let mut st = stream;
-            while true {
-                let (err, s) = self.parser.run(st);
-                if err != None {
-                    return (None, st)
+            let mut vector = Vec::new();
+            loop {
+                let (result, s) = self.parser.run(st);
+                match result {
+                    Result::Error(e) => {
+                        return self.ok(vector, st);
+                    },
+                    Result::Success(r) => {
+                        st = s;
+                        vector.push(r);
+                    }
                 }
-                st = s;
             }
-            (None, st)
         }
     }
 
+    /*
     pub fn many1<T: Parser + Copy>(parser: T) -> Seq<T, Many<T>> {
         seq(parser, many(parser))
     }
@@ -298,10 +304,11 @@ mod parser {
 use parser::*;
 #[cfg(not(test))]
 pub fn main() {
-    let stream = create_stream("Hello");
-    let parser = choice(ch('H'), ch('b'));
+    let stream = create_stream("rbbrHello");
+    let parser = many(choice(ch('r'), ch('b')));
     let (result, s) = parser.run(stream);
     println!("{:?}", result);
+    s.print();
 }
 
 /*

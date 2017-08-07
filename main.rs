@@ -1,14 +1,22 @@
 
 mod parser {
+    #[derive(Debug)]
     pub enum Error {
         UnexpectedEndOfInput(&'static str),
         UnexpectedToken(&'static str, &'static str),
         ExpectedEndOfInput(&'static str),
     }
 
-    pub enum Result<T> {
+    #[derive(Debug)]
+    pub enum Either<T, U> {
         Right(T),
-        Left(Error),
+        Left(U),
+    }
+
+    #[derive(Debug)]
+    pub enum Result<T> {
+        Success(T),
+        Error(Error),
     }
 
     pub fn formatError(error: Error) -> String {
@@ -83,9 +91,86 @@ mod parser {
      */
 
     pub trait Parser {
+        type Output;
+        fn ok(&self, o: Self::Output, s: StreamT) -> (Result<Self::Output>, StreamT) {
+            (Result::Success(o), s)
+        }
+        fn ko(&self, e: Error, s: StreamT) -> (Result<Self::Output>, StreamT) {
+            (Result::Error(e), s)
+        }
         fn get_name(&self) -> String;
-        fn run(&self, mut stream: StreamT) -> (Option<String>, StreamT);
+        fn run(&self, mut stream: StreamT) -> (Result<Self::Output>, StreamT);
     }
+
+    /**
+     * Chars
+     */
+    #[derive(Clone, Copy)]
+    pub struct Char {
+        character: char,
+    }
+
+    pub fn ch(c: char) -> Char {
+        Char { character: c }
+    }
+
+    impl Parser for Char {
+
+        type Output = char;
+
+        fn get_name(&self) -> String {
+            format!("Char {}", self.character)
+        }
+
+        fn run(&self, mut stream: StreamT) -> (Result<char>, StreamT) {
+            let ch = stream.get_first_char();
+            if self.character == ch {
+                self.ok(ch, stream)
+            } else {
+                let error = Error::UnexpectedToken(&ch.to_string(), &self.character.to_string());
+                self.ko(error, stream)
+            }
+        }
+    }
+
+    /**
+     * Choice
+     */
+    #[derive(Clone, Copy)]
+    pub struct Choice<T: Parser, U: Parser> {
+        first: T,
+        second: U,
+    }
+
+    pub fn choice<T: Parser, U: Parser>(first: T, second: U) -> Choice<T, U> {
+        Choice { first: first, second: second }
+    }
+
+    impl<T, U> Parser for Choice<T, U> where T: Parser, U: Parser {
+
+        type Output = Either<T, U>;
+
+        fn get_name(&self) -> String {
+            format!(
+                "choice({}, {})",
+                self.first.get_name(),
+                self.second.get_name(),
+            )
+        }
+
+        fn run(&self, mut s1: StreamT) -> (Result<Either<T, U>>, StreamT) {
+            if let (Result::Success(r), s2) = self.first.run(s1) {
+                return self.ok(r, s2)
+            }
+            if let (Result::Success(r), s2) = self.first.run(s1) {
+                return self.ok(r, s2)
+            }
+            let error = Error::UnexpectedToken(s1.iterable, &self.get_name());
+            self.ko(error, s1)
+        }
+    }
+
+    /*
 
     /**
      * Many
@@ -100,6 +185,7 @@ mod parser {
     }
 
     impl<T: Parser> Parser for Many<T> {
+        type Output = i32;
         fn get_name(&self) -> String {
             format!("many({})", self.parser.get_name())
         }
@@ -134,6 +220,7 @@ mod parser {
     }
 
     impl<T: Parser> Parser for Maybe<T> {
+        type Output = i32;
         fn get_name(&self) -> String {
             format!("maybe({})", self.parser.get_name())
         }
@@ -141,38 +228,6 @@ mod parser {
         fn run(&self, stream: StreamT) -> (Option<String>, StreamT) {
             let (_, s) = self.parser.run(stream);
             (None, s)
-        }
-    }
-
-    /**
-     * Choice
-     */
-    #[derive(Clone, Copy)]
-    pub struct Choice<T: Parser, U: Parser> {
-        first: T,
-        second: U,
-    }
-
-    pub fn choice<T: Parser, U: Parser>(first: T, second: U) -> Choice<T, U> {
-        Choice { first: first, second: second }
-    }
-
-    impl<T, U> Parser for Choice<T, U> where T: Parser, U: Parser {
-        fn get_name(&self) -> String {
-            format!(
-                "choice({}, {})",
-                self.first.get_name(),
-                self.second.get_name(),
-            )
-        }
-
-        fn run(&self, mut s1: StreamT) -> (Option<String>, StreamT) {
-            let (e1, s2) = self.first.run(s1);
-            if e1 == None { return (None, s2) }
-            let (e2, s3) = self.second.run(s1);
-            if e2 == None { return (None, s3) }
-            let error = Some(format!("Cannot match {} with {:?}", self.get_name(), s1.iterable.chars().next()));
-            (error, s1)
         }
     }
 
@@ -190,6 +245,7 @@ mod parser {
     }
 
     impl<T, U> Parser for Seq<T, U> where T: Parser, U: Parser {
+        type Output = i32;
         fn get_name(&self) -> String {
             format!(
                 "seq({}, {})",
@@ -208,35 +264,6 @@ mod parser {
     }
 
     /**
-     * Chars
-     */
-    #[derive(Clone, Copy)]
-    pub struct Char {
-        character: char,
-    }
-
-    pub fn ch(c: char) -> Char {
-        Char { character: c }
-    }
-
-    impl Parser for Char {
-
-        fn get_name(&self) -> String {
-            format!("Char {}", self.character)
-        }
-
-        fn run(&self, mut stream: StreamT) -> (Option<String>, StreamT) {
-            let ch = stream.get_first_char();
-            if self.character == ch {
-                (None, stream.consume(ch))
-            } else {
-                let error = format!("Couldn't match character {} with {}", ch, self.character);
-                (Some(error), stream)
-            }
-        }
-    }
-
-    /**
      * Symbols
      */
     #[derive(Clone, Copy)]
@@ -245,6 +272,8 @@ mod parser {
     }
 
     impl Parser for Symbol {
+
+        type Output = i32;
 
         fn get_name(&self) -> String {
             format!("Symbol {}", self.string)
@@ -263,8 +292,19 @@ mod parser {
     pub fn symbol(string: &'static str) -> Symbol {
         Symbol { string: string }
     }
+    */
 }
 
+use parser::*;
+#[cfg(not(test))]
+pub fn main() {
+    let stream = create_stream("Hello");
+    let parser = choice(ch('H'), ch('b'));
+    let (result, s) = parser.run(stream);
+    println!("{:?}", result);
+}
+
+/*
 #[cfg(test)]
 mod test {
 
@@ -305,3 +345,4 @@ mod test {
         should_consume_all("ab ba", symbol("ab ba"));
     }
 }
+*/

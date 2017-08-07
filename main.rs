@@ -2,9 +2,9 @@
 mod parser {
     #[derive(Debug)]
     pub enum Error {
-        UnexpectedEndOfInput(&'static str),
-        UnexpectedToken(&'static str, &'static str),
-        ExpectedEndOfInput(&'static str),
+        UnexpectedEndOfInput(String),
+        UnexpectedToken(String, String),
+        ExpectedEndOfInput(String),
     }
 
     #[derive(Debug)]
@@ -105,7 +105,7 @@ mod parser {
     /**
      * Chars
      */
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct Char {
         character: char,
     }
@@ -127,7 +127,7 @@ mod parser {
             if self.character == ch {
                 self.ok(ch, stream)
             } else {
-                let error = Error::UnexpectedToken(&ch.to_string(), &self.character.to_string());
+                let error = Error::UnexpectedToken(ch.to_string(), self.character.to_string());
                 self.ko(error, stream)
             }
         }
@@ -148,7 +148,7 @@ mod parser {
 
     impl<T, U> Parser for Choice<T, U> where T: Parser, U: Parser {
 
-        type Output = Either<T, U>;
+        type Output = Either<T::Output, U::Output>;
 
         fn get_name(&self) -> String {
             format!(
@@ -158,14 +158,14 @@ mod parser {
             )
         }
 
-        fn run(&self, mut s1: StreamT) -> (Result<Either<T, U>>, StreamT) {
+        fn run(&self, mut s1: StreamT) -> (Result<Self::Output>, StreamT) {
             if let (Result::Success(r), s2) = self.first.run(s1) {
-                return self.ok(r, s2)
+                return self.ok(Either::Right(r), s2)
             }
             if let (Result::Success(r), s2) = self.first.run(s1) {
-                return self.ok(r, s2)
+                return self.ok(Either::Right(r), s2)
             }
-            let error = Error::UnexpectedToken(s1.iterable, &self.get_name());
+            let error = Error::UnexpectedToken(String::from(s1.iterable), self.get_name());
             self.ko(error, s1)
         }
     }

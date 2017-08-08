@@ -212,6 +212,7 @@ mod parser {
     pub fn many1<T: Parser + Copy>(parser: T) -> Seq<T, Many<T>> {
         seq(parser, many(parser))
     }
+    */
 
     /**
      * Maybe
@@ -226,14 +227,18 @@ mod parser {
     }
 
     impl<T: Parser> Parser for Maybe<T> {
-        type Output = i32;
+        type Output = Option<T::Output>;
+
         fn get_name(&self) -> String {
             format!("maybe({})", self.parser.get_name())
         }
 
-        fn run(&self, stream: StreamT) -> (Option<String>, StreamT) {
-            let (_, s) = self.parser.run(stream);
-            (None, s)
+        fn run(&self, stream: StreamT) -> (Result<Self::Output>, StreamT) {
+            let (result, st) = self.parser.run(stream);
+            match result {
+                Result::Success(r) => self.ok(Some(r), st),
+                Result::Error(e) => self.ok(None, stream),
+            }
         }
     }
 
@@ -251,7 +256,9 @@ mod parser {
     }
 
     impl<T, U> Parser for Seq<T, U> where T: Parser, U: Parser {
-        type Output = i32;
+
+        type Output = Vev<T::Output, U::Output>;
+
         fn get_name(&self) -> String {
             format!(
                 "seq({}, {})",
@@ -260,15 +267,26 @@ mod parser {
             )
         }
 
-        fn run(&self, mut s1: StreamT) -> (Option<String>, StreamT) {
-            let (e1, s2) = self.first.run(s1);
-            if e1 != None { return (e1, s1) }
-            let (e2, s3) = self.second.run(s2);
-            if e2 != None { return (e2, s1) }
-            (None, s3)
+        fn run(&self, mut s1: StreamT) -> (Result<Self::Output>, StreamT) {
+
+            let mut vector = Vec::new();
+            let st = s1;
+
+            if let (Result::Success(r), s2) = self.first.run(s1) {
+                vector.push(r);
+                st = s2;
+            } else {
+                self.ko(Error::UnexpectedToken)
+            }
+            if let (Result::Error(e), s3) = self.second.run(s2) {
+                return self.ko(UnexpectedToken(s2.iterable, self.second.get_name()), s1)
+            }
+
+            self.ok(s3)
         }
     }
 
+    /*
     /**
      * Symbols
      */
@@ -304,8 +322,8 @@ mod parser {
 use parser::*;
 #[cfg(not(test))]
 pub fn main() {
-    let stream = create_stream("rbbrHello");
-    let parser = many(choice(ch('r'), ch('b')));
+    let stream = create_stream("tbbrHello");
+    let parser = maybe(ch('r'));
     let (result, s) = parser.run(stream);
     println!("{:?}", result);
     s.print();
